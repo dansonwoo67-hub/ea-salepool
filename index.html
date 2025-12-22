@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>EA Coverage Dashboard (Compare 2 Excels)</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- SheetJS (xlsx) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>EA 覆盖率对比 & 必跟进ID推荐（两表区间分析）</h1>
+    <p class="sub">上传两张Excel（T1旧 / T2新），选择各自日期，自动输出覆盖率变化、首轮/复联、并按规则推荐每EA最多20条跟进ID。</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Step 1：上传两张表并选择日期</h2>
+      <div class="grid2">
+        <div class="box">
+          <h3>T1（旧表）</h3>
+          <input id="file1" type="file" accept=".xlsx,.xls" />
+          <label class="lbl">T1 日期（手动选）</label>
+          <input id="date1" type="date" />
+          <div id="t1meta" class="meta"></div>
+        </div>
+
+        <div class="box">
+          <h3>T2（新表）</h3>
+          <input id="file2" type="file" accept=".xlsx,.xls" />
+          <label class="lbl">T2 日期（手动选）</label>
+          <input id="date2" type="date" />
+          <div id="t2meta" class="meta"></div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="btnLoad" class="btn">Load</button>
+        <button id="btnAnalyze" class="btn primary" disabled>Analyze</button>
+      </div>
+
+      <div class="hint">
+        <strong>提示：</strong>你上传的是“自己组”的表即可；网页会按 Team / EA / Pool 输出。若列名不一致，可在 Step 2 做字段映射。
+      </div>
+    </section>
+
+    <section class="card" id="mappingCard" style="display:none;">
+      <h2>Step 2：字段映射（只在无法自动识别时需要）</h2>
+      <p class="sub">
+        网页会尝试自动识别列：Learner ID、EA、Team、Last Connection、Last Follow-up、Remaining、LastMonthConsumed。
+        如识别失败，请在下面下拉框中选择正确列名（对所有pool统一生效）。
+      </p>
+
+      <div id="mappingArea" class="mapping"></div>
+
+      <div class="actions">
+        <button id="btnApplyMapping" class="btn">Apply Mapping</button>
+      </div>
+    </section>
+
+    <section class="card" id="resultsCard" style="display:none;">
+      <h2>Step 3：结果输出</h2>
+
+      <div class="tabs">
+        <button class="tab active" data-tab="tabCoverage">覆盖率对比</button>
+        <button class="tab" data-tab="tabFirstFollow">首轮/复联</button>
+        <button class="tab" data-tab="tabRecommend">推荐跟进ID</button>
+      </div>
+
+      <div id="tabCoverage" class="tabpane active">
+        <h3>覆盖率对比（T2 vs T1）</h3>
+        <div class="toolbar">
+          <button class="btn" id="exportCoverage">Export CSV</button>
+        </div>
+        <div id="coverageTable" class="tableWrap"></div>
+      </div>
+
+      <div id="tabFirstFollow" class="tabpane">
+        <h3>区间首轮覆盖 & follow-up 覆盖</h3>
+        <div class="toolbar">
+          <button class="btn" id="exportFirstFollow">Export CSV</button>
+        </div>
+        <div id="firstFollowTable" class="tableWrap"></div>
+      </div>
+
+      <div id="tabRecommend" class="tabpane">
+        <h3>每EA每日最多20条：必须跟进ID（EA - ID - Pool）</h3>
+        <div class="toolbar">
+          <button class="btn" id="exportRecommend">Export CSV</button>
+        </div>
+        <div id="recommendTable" class="tableWrap"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p class="sub">
+      本工具为纯前端静态页面：文件只在浏览器内存解析，不会自动上传到服务器（除非你自己在浏览器装了插件或被抓包）。
+      如需权限控制，请使用公司内网Pages或企业GitHub。
+    </p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
