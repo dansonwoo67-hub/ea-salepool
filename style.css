@@ -1,1 +1,51 @@
-
+:root{
+  --card:#121826;
+  --text:#e6edf3;
+  --muted:#9fb0c0;
+  --line:#243043;
+  --primary:#3b82f6;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Arial;
+  background:#0b0f14;
+  color:var(--text);
+}
+header{padding:20px;max-width:1200px;margin:0 auto}
+h1{margin:0;font-size:20px}
+main{max-width:1200px;margin:0 auto;padding:0 20px 40px}
+.card{
+  background:rgba(18,24,38,.92);
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:16px;
+  margin-top:14px;
+}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:900px){.grid2{grid-template-columns:1fr}}
+.box{border:1px dashed var(--line);border-radius:12px;padding:12px}
+.meta{margin-top:8px;color:var(--muted);font-size:12px}
+.actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+.btn{
+  padding:10px 12px;border-radius:10px;border:1px solid var(--line);
+  background:#0f1522;color:var(--text);cursor:pointer
+}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.primary{background:var(--primary);border-color:var(--primary)}
+.mapping{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+@media (max-width:900px){.mapping{grid-template-columns:1fr}}
+.mapItem{border:1px solid var(--line);border-radius:12px;padding:10px;background:rgba(10,14,22,.6)}
+.mapItem label{display:block;color:var(--muted);font-size:12px;margin-bottom:6px}
+.mapItem select{width:100%;padding:8px;border-radius:10px;border:1px solid var(--line);background:#0f1522;color:var(--text)}
+.tabs{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.tab{padding:8px 10px;border-radius:10px;border:1px solid var(--line);background:#0f1522;color:var(--text);cursor:pointer}
+.tab.active{background:rgba(59,130,246,.25);border-color:rgba(59,130,246,.6)}
+.tabpane{display:none;margin-top:12px}
+.tabpane.active{display:block}
+.toolbar{display:flex;justify-content:flex-end;margin:8px 0}
+.tableWrap{overflow:auto;border:1px solid var(--line);border-radius:12px}
+table{width:100%;border-collapse:collapse;min-width:980px;background:#0f1522}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);font-size:12px;white-space:nowrap}
+th{position:sticky;top:0;background:#0f1522;z-index:1;text-align:left}
+input[type="text"]{width:100%;padding:8px;border-radius:10px;border:1px solid var(--line);background:#0f1522;color:var(--text);margin-top:10px}
