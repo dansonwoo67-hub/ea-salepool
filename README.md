@@ -1,4 +1,4 @@
-# EA Coverage Dashboard (v16)
+# EA Coverage Dashboard (v17)
 
 Fixes per your feedback:
 1) EA overview:
@@ -29,8 +29,6 @@ v15 updates:
 - Follow-up gating uses OVERALL EA month coverage (all pools excluding M1), not per-pool coverage.
 
 
-v16 updates:
-- Recommendations: family-level exclusion if ANY member connected within last 14 days (relative to T2 end date).
-- Recommendations: still exclude mixed families (some connected this month, some not).
-- By pool: `added_connected` now counts connections on the pool’s own latest day within the selected month window.
-- Cache bust: worker is loaded as worker.js?v=16 to avoid stale caching.
+v17 speed update:
+- Parsing optimized: read dense worksheets directly (no full sheet_to_json), only required columns.
+- Worker cache-bust: worker.js?v=17.
