@@ -1,9 +1,12 @@
-# EA Coverage Dashboard (v2)
+# EA Coverage Dashboard (v10)
 
-- English UI
-- No manual date input: uses each file's latest valid Last Connection Date
-- Faster parsing by reading array-of-arrays and extracting only required columns
+Enhancement:
+- Adds BOTH metrics within (T1 end, T2 end] for the selected month:
+  - period_first: newly covered in the month during the period (not covered by T1 end, covered by T2 end)
+  - period_followup: updated follow-up connects during the period (covered by T1 end, and T2 date is later than T1 date)
+  - period_followup_share: followup / (first + followup)
 
-Deploy:
-- Upload index.html / style.css / app.js to repo root
-- Settings -> Pages -> main /(root)
+Other rules unchanged:
+- Month comparison is computed on the T2 roster (denominator = total_records from T2).
+- Latest-day coverage uses T2 end date within selected month.
+- M1 excluded.

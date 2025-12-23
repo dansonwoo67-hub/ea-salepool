@@ -5,16 +5,13 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>EA Coverage Dashboard</title>
   <link rel="stylesheet" href="style.css" />
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
-  <header>
-    <h1>EA Coverage & Follow-up Recommendations</h1>
-  </header>
+  <header><h1>EA Coverage Dashboard</h1></header>
 
   <main>
     <section class="card">
-      <h2>Upload 2 Excel files (T1 vs T2)</h2>
+      <h2>Upload 2 Excel files</h2>
       <div class="grid2">
         <div class="box">
           <h3>T1 (older)</h3>
@@ -25,52 +22,44 @@
         <div class="box">
           <h3>T2 (newer)</h3>
           <input id="file2" type="file" accept=".xlsx,.xls" />
-          <input id="teamFilter" type="text" placeholder="Optional: Team filter (exact name)" />
+          <div class="row2">
+            <input id="teamFilter" type="text" placeholder="Team filter (optional, exact name)" />
+            <div class="monthWrap">
+              <label for="monthPick">Month</label>
+              <input id="monthPick" type="month" />
+            </div>
+          </div>
           <div id="t2meta" class="meta"></div>
         </div>
       </div>
 
       <div class="actions">
-        <button id="btnLoad" class="btn">Load</button>
-        <button id="btnAnalyze" class="btn primary" disabled>Analyze</button>
-      </div>
-    </section>
-
-    <section class="card" id="mappingCard" style="display:none;">
-      <h2>Column mapping (only if needed)</h2>
-      <div id="mappingArea" class="mapping"></div>
-      <div class="actions">
-        <button id="btnApplyMapping" class="btn">Apply mapping</button>
+        <button id="btnRun" class="btn primary" disabled>Run</button>
+        <span id="status" class="status"></span>
       </div>
     </section>
 
     <section class="card" id="resultsCard" style="display:none;">
-      <h2>Results</h2>
+      <div id="summary" class="summary"></div>
 
       <div class="tabs">
-        <button class="tab active" data-tab="tabCoverage">Coverage delta</button>
-        <button class="tab" data-tab="tabFirstFollow">First vs Follow-up</button>
-        <button class="tab" data-tab="tabRecommend">Top 20 follow-ups / EA</button>
+        <button class="tab active" data-tab="tabEA">EA overview</button>
+        <button class="tab" data-tab="tabPool">By pool</button>
+        <button class="tab" data-tab="tabRecommend">Follow-up list</button>
       </div>
 
-      <div id="tabCoverage" class="tabpane active">
-        <div class="toolbar">
-          <button class="btn" id="exportCoverage">Export CSV</button>
-        </div>
-        <div id="coverageTable" class="tableWrap"></div>
+      <div id="tabEA" class="tabpane active">
+        <div class="toolbar"><button class="btn" id="exportEA">Export CSV</button></div>
+        <div id="eaTable" class="tableWrap"></div>
       </div>
 
-      <div id="tabFirstFollow" class="tabpane">
-        <div class="toolbar">
-          <button class="btn" id="exportFirstFollow">Export CSV</button>
-        </div>
-        <div id="firstFollowTable" class="tableWrap"></div>
+      <div id="tabPool" class="tabpane">
+        <div class="toolbar"><button class="btn" id="exportPool">Export CSV</button></div>
+        <div id="poolTable" class="tableWrap"></div>
       </div>
 
       <div id="tabRecommend" class="tabpane">
-        <div class="toolbar">
-          <button class="btn" id="exportRecommend">Export CSV</button>
-        </div>
+        <div class="toolbar"><button class="btn" id="exportRecommend">Export CSV</button></div>
         <div id="recommendTable" class="tableWrap"></div>
       </div>
     </section>
