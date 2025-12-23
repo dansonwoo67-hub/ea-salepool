@@ -52,7 +52,7 @@ $("file2").addEventListener("change", updateRunEnabled);
 $("btnRun").addEventListener("click", async ()=>{
   const f1=$("file1").files[0], f2=$("file2").files[0];
   const teamFilter=$("teamFilter").value || "";
-  const monthPick=$("monthPick").value || ""; // "YYYY-MM"
+  const monthPick=$("monthPick").value || "";
   if (!f1 || !f2) return;
 
   $("btnRun").disabled = true;
@@ -72,8 +72,8 @@ worker.onmessage = (ev)=>{
   $("btnRun").disabled=false;
   lastResults = data.payload;
 
-  $("t1meta").textContent = `Latest in month: ${lastResults.t1End || "-"}`;
-  $("t2meta").textContent = `Latest in month: ${lastResults.t2End || "-"}`;
+  $("t1meta").textContent = `T1 end (month): ${lastResults.t1End || "-"}`;
+  $("t2meta").textContent = `T2 end (month): ${lastResults.t2End || "-"}`;
 
   $("resultsCard").style.display = "block";
 
@@ -84,28 +84,24 @@ worker.onmessage = (ev)=>{
     <div class="pill">Export base: <b>${lastResults.exportBase}</b></div>
   `;
 
-  const cols = [
+  const colsEA = [
     "team","ea","total_records",
-    "t1_month_connected","t1_month_rate",
-    "t2_month_connected","t2_month_rate",
-    "delta_connected","delta_rate",
-    "t2_latest_day","t2_latest_day_connected","t2_latest_day_rate",
-    "period_first","period_followup","period_followup_share"
+    "month_connected","month_rate",
+    "added_connected",
+    "period_first","period_followup",
+    "remark"
   ];
-  renderTable("eaTable", cols, lastResults.eaOverview);
+  renderTable("eaTable", colsEA, lastResults.eaOverview);
 
-  const cols2 = [
+  const colsPool = [
     "team","pool","ea","total_records",
-    "t1_month_connected","t1_month_rate",
-    "t2_month_connected","t2_month_rate",
-    "delta_connected","delta_rate",
-    "t2_latest_day","t2_latest_day_connected","t2_latest_day_rate",
-    "period_first","period_followup","period_followup_share"
+    "month_connected","month_rate",
+    "period_first","period_followup"
   ];
-  renderTable("poolTable", cols2, lastResults.poolOverview);
+  renderTable("poolTable", colsPool, lastResults.poolOverview);
 
-  const cols3 = ["team","ea","family_id","family_rank","learnerId","pool","output","reason"];
-  renderTable("recommendTable", cols3, lastResults.recommendations);
+  const colsRec = ["team","ea","learnerId","family_id","pool","lastConn","lastMonthCons","thisMonthCons","remaining","reason"];
+  renderTable("recommendTable", colsRec, lastResults.recommendations);
 
   $("exportEA").onclick=()=>downloadCSV(`${lastResults.exportBase}-EA.csv`, lastResults.eaOverview);
   $("exportPool").onclick=()=>downloadCSV(`${lastResults.exportBase}-POOL.csv`, lastResults.poolOverview);

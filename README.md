@@ -1,12 +1,9 @@
-# EA Coverage Dashboard (v10)
+# EA Coverage Dashboard (v11)
 
-Enhancement:
-- Adds BOTH metrics within (T1 end, T2 end] for the selected month:
-  - period_first: newly covered in the month during the period (not covered by T1 end, covered by T2 end)
-  - period_followup: updated follow-up connects during the period (covered by T1 end, and T2 date is later than T1 date)
-  - period_followup_share: followup / (first + followup)
-
-Other rules unchanged:
-- Month comparison is computed on the T2 roster (denominator = total_records from T2).
-- Latest-day coverage uses T2 end date within selected month.
-- M1 excluded.
+Implements your optimization requirements:
+1) EA overview: only T2 month metrics + added_connected vs T1, keep period_first + period_followup, add remark like "M2-3, duration-4".
+2) By pool: only T2 metrics + period_first + period_followup (no T1 columns shown).
+3) Recommended IDs (max 20 per EA):
+   - Priority (descending): recency bucket > pool priority > last-month consumption > remaining sessions.
+   - Filters: last month consumption >= 8 AND this month consumption > 0; M1 excluded.
+   - Keep same Family ID together; skip a family if it would exceed 20 IDs.

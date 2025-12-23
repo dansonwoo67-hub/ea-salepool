@@ -9,6 +9,7 @@ const FIXED = {
   teamName: "Latest (Current) Assigned SS Group Name",
   lastConn: "Last SS Connection Date",
   lastMonthConsumed: "Class Consumption Last Month",
+  thisMonthConsumed: "Class Consumption This Month",
   remaining: "Total Session Card Count"
 };
 
@@ -17,9 +18,9 @@ function poolNameFromSheet(sheetName){
   const n = norm(sheetName);
   if (n.includes("m2")) return "m2";
   if (n.includes("expiring")) return "expiring";
+  if (n.includes("duration")) return "duration";
   if (n.includes("expired")) return "expired";
   if (n === "exp" || n.startsWith("exp ")) return "expired";
-  if (n.includes("duration")) return "duration";
   if (n.includes("period")) return "period";
   if (n.includes("m1")) return "m1";
   return n;
@@ -40,6 +41,13 @@ function addDays(iso, days){
 function lastDayOfMonth(y,m){
   const dt = new Date(Date.UTC(y, m, 0));
   return isoFromYMD(dt.getUTCFullYear(), dt.getUTCMonth()+1, dt.getUTCDate());
+}
+function diffDays(aIso, bIso){
+  const ay=Number(aIso.slice(0,4)), am=Number(aIso.slice(5,7)), ad=Number(aIso.slice(8,10));
+  const by=Number(bIso.slice(0,4)), bm=Number(bIso.slice(5,7)), bd=Number(bIso.slice(8,10));
+  const a=new Date(Date.UTC(ay,am-1,ad));
+  const b=new Date(Date.UTC(by,bm-1,bd));
+  return Math.floor((a-b)/86400000);
 }
 
 function excelDateToISO(v){
@@ -129,6 +137,7 @@ function parseWorkbook(wb, teamFilter){
       teamName: header.indexOf(FIXED.teamName),
       lastConn: header.indexOf(FIXED.lastConn),
       lastMonthConsumed: header.indexOf(FIXED.lastMonthConsumed),
+      thisMonthConsumed: header.indexOf(FIXED.thisMonthConsumed),
       remaining: header.indexOf(FIXED.remaining)
     };
     if (idx.learnerId<0 || idx.eaName<0 || idx.lastConn<0) continue;
@@ -145,6 +154,7 @@ function parseWorkbook(wb, teamFilter){
       const lastConn = excelDateToISO(idx.lastConn>=0 ? r[idx.lastConn] : null);
       const familyId = idx.familyId>=0 ? (r[idx.familyId] ?? "") : "";
       const lm = idx.lastMonthConsumed>=0 ? safeNum(r[idx.lastMonthConsumed]) : null;
+      const tm = idx.thisMonthConsumed>=0 ? safeNum(r[idx.thisMonthConsumed]) : null;
       const rem = idx.remaining>=0 ? safeNum(r[idx.remaining]) : null;
 
       rows.push({
@@ -155,6 +165,7 @@ function parseWorkbook(wb, teamFilter){
         teamName: (teamName??"").toString().trim(),
         lastConn,
         lastMonthConsumed: lm,
+        thisMonthConsumed: tm,
         remaining: rem
       });
     }
@@ -204,12 +215,12 @@ function k(parts){ return parts.map(x=>(x??"").toString()).join("||"); }
 function poolPriority(pool){
   if (pool==="m2") return 4;
   if (pool==="expiring") return 3;
-  if (pool==="expired") return 2;
-  if (pool==="period" || pool==="duration") return 1;
+  if (pool==="duration" || pool==="period") return 2;
+  if (pool==="expired") return 1;
   return 0;
 }
 
-function buildOverviews(t1Rows, t2Rows, monthStart, monthEndFull, t1End, t2End){
+function buildMetricsAndRemark(t1Rows, t2Rows, monthStart, monthEndFull, t1End, t2End){
   const t1Map=new Map();
   for (const r of t1Rows){
     const key=k([r.teamName,r.eaName,r.pool,r.learnerId]);
@@ -226,9 +237,9 @@ function buildOverviews(t1Rows, t2Rows, monthStart, monthEndFull, t1End, t2End){
 
   const poolAgg=new Map();
   const eaAgg=new Map();
+  const poolDeltaByEA=new Map(); // eaKey -> pool -> delta
 
-  // define period bounds within month
-  const periodStart = t1End ? t1End : addDays(monthStart, -1); // so (periodStart, t2End] starts at monthStart if no t1End
+  const periodStart = t1End ? t1End : addDays(monthStart, -1);
   const periodStartNext = addDays(periodStart, 1);
 
   for (const [key, r2] of t2Map.entries()){
@@ -237,17 +248,12 @@ function buildOverviews(t1Rows, t2Rows, monthStart, monthEndFull, t1End, t2End){
     const eaKey=k([team,ea]);
 
     if (!poolAgg.has(poolKey)){
-      poolAgg.set(poolKey,{
-        team,pool,ea,totalSet:new Set(),
-        t1MonthSet:new Set(), t2MonthSet:new Set(),
-        t2DaySet:new Set(),
-        periodFirstSet:new Set(),
-        periodFollowSet:new Set()
-      });
+      poolAgg.set(poolKey,{team,pool,ea,totalSet:new Set(), t1MonthSet:new Set(), t2MonthSet:new Set(), pFirstSet:new Set(), pFollowSet:new Set()});
     }
     if (!eaAgg.has(eaKey)){
-      eaAgg.set(eaKey,{team,ea,total:0,t1Month:0,t2Month:0,t2Day:0,periodFirst:0,periodFollow:0});
+      eaAgg.set(eaKey,{team,ea,total:0,t1Month:0,t2Month:0,pFirst:0,pFollow:0});
     }
+    if (!poolDeltaByEA.has(eaKey)) poolDeltaByEA.set(eaKey, new Map());
 
     const pa=poolAgg.get(poolKey);
     pa.totalSet.add(r2.learnerId);
@@ -259,82 +265,79 @@ function buildOverviews(t1Rows, t2Rows, monthStart, monthEndFull, t1End, t2End){
     const t1Covered = t1End ? inRange(d1, monthStart, t1End) : false;
     const t2Covered = t2End ? inRange(d2, monthStart, t2End) : false;
 
-    if (t2Covered) pa.t2MonthSet.add(r2.learnerId);
-    if (t2End && isValidISODate(d2) && d2===t2End) pa.t2DaySet.add(r2.learnerId);
     if (t1Covered) pa.t1MonthSet.add(r2.learnerId);
+    if (t2Covered) pa.t2MonthSet.add(r2.learnerId);
 
-    // Period increment classification within (t1End, t2End]
     if (t2End && inRange(d2, periodStartNext, t2End) && t2Covered){
-      if (!t1Covered){
-        pa.periodFirstSet.add(r2.learnerId);
-      } else if (isValidISODate(d1) && isValidISODate(d2) && d2>d1){
-        pa.periodFollowSet.add(r2.learnerId);
-      }
+      if (!t1Covered) pa.pFirstSet.add(r2.learnerId);
+      else if (isValidISODate(d1) && isValidISODate(d2) && d2>d1) pa.pFollowSet.add(r2.learnerId);
     }
   }
 
+  // Build pool overview + accumulate EA
   const poolRows=[];
   for (const pa of poolAgg.values()){
     const total=pa.totalSet.size;
-    const t1c=pa.t1MonthSet.size;
     const t2c=pa.t2MonthSet.size;
-    const delta=t2c-t1c;
-    const t2Day=pa.t2DaySet.size;
-
-    const pFirst=pa.periodFirstSet.size;
-    const pFollow=pa.periodFollowSet.size;
-    const share = (pFirst+pFollow)>0 ? (pFollow/(pFirst+pFollow)*100).toFixed(1)+"%" : "0.0%";
+    const pFirst=pa.pFirstSet.size;
+    const pFollow=pa.pFollowSet.size;
 
     poolRows.push({
       team:pa.team,
       pool:pa.pool,
       ea:pa.ea,
       total_records: total,
-      t1_month_connected: t1c,
-      t1_month_rate: total? (t1c/total*100).toFixed(1)+"%":"0.0%",
-      t2_month_connected: t2c,
-      t2_month_rate: total? (t2c/total*100).toFixed(1)+"%":"0.0%",
-      delta_connected: delta,
-      delta_rate: total? (delta/total*100).toFixed(1)+"%":"0.0%",
-      t2_latest_day: (t2End||""),
-      t2_latest_day_connected: t2Day,
-      t2_latest_day_rate: total? (t2Day/total*100).toFixed(1)+"%":"0.0%",
+      month_connected: t2c,
+      month_rate: total? (t2c/total*100).toFixed(1)+"%":"0.0%",
       period_first: pFirst,
-      period_followup: pFollow,
-      period_followup_share: share
+      period_followup: pFollow
     });
 
     const eaKey=k([pa.team, pa.ea]);
     const ea=eaAgg.get(eaKey);
     ea.total += total;
-    ea.t1Month += t1c;
     ea.t2Month += t2c;
-    ea.t2Day += t2Day;
-    ea.periodFirst += pFirst;
-    ea.periodFollow += pFollow;
+    ea.t1Month += pa.t1MonthSet.size;
+    ea.pFirst += pFirst;
+    ea.pFollow += pFollow;
+
+    const delta = pa.t2MonthSet.size - pa.t1MonthSet.size;
+    if (delta !== 0){
+      poolDeltaByEA.get(eaKey).set(pa.pool, delta);
+    }
   }
 
   const eaRows=[];
-  for (const ea of eaAgg.values()){
+  for (const [eaKey, ea] of eaAgg.entries()){
     const total=ea.total;
-    const delta=ea.t2Month-ea.t1Month;
-    const share = (ea.periodFirst+ea.periodFollow)>0 ? (ea.periodFollow/(ea.periodFirst+ea.periodFollow)*100).toFixed(1)+"%" : "0.0%";
+    const added = ea.t2Month - ea.t1Month;
+
+    const poolDelta = poolDeltaByEA.get(eaKey) || new Map();
+    const parts=[];
+    const order=["m2","expiring","duration","period","expired"];
+    for (const p of order){
+      if (!poolDelta.has(p)) continue;
+      const v=poolDelta.get(p);
+      if (v>0){
+        const label = (p==="m2") ? "M2" : (p==="period" ? "duration" : p);
+        parts.push(`${label}-${v}`);
+      }
+    }
+    for (const [p,v] of poolDelta.entries()){
+      if (order.includes(p)) continue;
+      if (v>0) parts.push(`${p}-${v}`);
+    }
+
     eaRows.push({
       team:ea.team,
       ea:ea.ea,
       total_records: total,
-      t1_month_connected: ea.t1Month,
-      t1_month_rate: total? (ea.t1Month/total*100).toFixed(1)+"%":"0.0%",
-      t2_month_connected: ea.t2Month,
-      t2_month_rate: total? (ea.t2Month/total*100).toFixed(1)+"%":"0.0%",
-      delta_connected: delta,
-      delta_rate: total? (delta/total*100).toFixed(1)+"%":"0.0%",
-      t2_latest_day: (t2End||""),
-      t2_latest_day_connected: ea.t2Day,
-      t2_latest_day_rate: total? (ea.t2Day/total*100).toFixed(1)+"%":"0.0%",
-      period_first: ea.periodFirst,
-      period_followup: ea.periodFollow,
-      period_followup_share: share
+      month_connected: ea.t2Month,
+      month_rate: total? (ea.t2Month/total*100).toFixed(1)+"%":"0.0%",
+      added_connected: added,
+      period_first: ea.pFirst,
+      period_followup: ea.pFollow,
+      remark: parts.join(", ")
     });
   }
 
@@ -348,89 +351,116 @@ function buildOverviews(t1Rows, t2Rows, monthStart, monthEndFull, t1End, t2End){
   return {eaRows, poolRows};
 }
 
-function buildRecommendations(t2Rows, monthStart, t2End){
+function recencyRank(refDate, monthStart, lastConn){
+  if (!isValidISODate(lastConn) || !isValidISODate(refDate)) return 4;
+  const days = diffDays(refDate, lastConn);
+  if (days >= 21) return 4;
+  const inMonth = inRange(lastConn, monthStart, refDate);
+  if (!inMonth) return 3;
+  if (days > 14) return 2;
+  return 1;
+}
+function recencyLabel(rank){
+  if (rank===4) return "21d+ no connect";
+  if (rank===3) return "not covered this month";
+  if (rank===2) return ">14d in month";
+  return "<=14d in month";
+}
+
+function buildRecommendations(t2Rows, monthStart, t2End, monthEndFull){
+  const refDate = t2End || monthEndFull;
   const byEA=new Map();
   for (const r of t2Rows){
     if (POOL_EXCLUDE.has(r.pool)) continue;
+    const pr=poolPriority(r.pool);
+    if (pr<=0) continue;
     if (!byEA.has(r.eaName)) byEA.set(r.eaName,[]);
     byEA.get(r.eaName).push(r);
   }
 
   const out=[];
+  const familyKey = (r)=> (r.familyId && r.familyId!=="") ? `F:${r.familyId}` : `L:${r.learnerId}`;
+
   for (const [ea, rows] of byEA.entries()){
-    const candidates = rows.filter(r=>{
-      if (!t2End) return true;
-      if (r.pool==="m2") return !inRange(r.lastConn, monthStart, t2End);
-      if (r.pool==="expiring" || r.pool==="expired") return !inRange(r.lastConn, monthStart, t2End);
-      if (r.pool==="period" || r.pool==="duration") return !inRange(r.lastConn, monthStart, t2End);
-      return false;
-    }).map(r=>{
-      let score=0;
-      const p=poolPriority(r.pool);
-      if (r.pool==="m2"){
-        score = 1e9 + p*1e6 + (isValidISODate(r.lastConn)? -Number(r.lastConn.replaceAll("-","")) : 0);
-      } else if (r.pool==="expiring" || r.pool==="expired"){
-        score = 5e8 + p*1e6 + ((r.lastMonthConsumed??0)*1000);
-      } else {
-        const rem = (r.remaining==null?999999:r.remaining);
-        const remScore = rem<=0?1e6:(1e6/(rem+1));
-        score = 2e8 + p*1e6 + remScore + ((r.lastMonthConsumed??0)*500);
-      }
-      return {...r, _score:score};
+    // Condition 3 filter
+    const filtered = rows.filter(r=>{
+      const lm = r.lastMonthConsumed;
+      const tm = r.thisMonthConsumed;
+      if (lm == null || lm < 8) return false;
+      if (tm == null || tm <= 0) return false;
+      return true;
     });
 
-    candidates.sort((a,b)=> b._score-a._score);
+    const scored = filtered.map(r=>{
+      const c1 = recencyRank(refDate, monthStart, r.lastConn);
+      const c2 = poolPriority(r.pool);
+      const c3 = r.lastMonthConsumed ?? 0;
+      const c4 = (r.remaining==null? 999999 : r.remaining); // smaller is better
+      return {...r, _c1:c1, _c2:c2, _c3:c3, _c4:c4};
+    });
 
-    const familyKey = (r)=> (r.familyId && r.familyId!=="") ? `F:${r.familyId}` : `L:${r.learnerId}`;
-    const famPicked=new Set();
-    let famRank=0;
+    scored.sort((a,b)=>{
+      if (a._c1 !== b._c1) return b._c1 - a._c1;
+      if (a._c2 !== b._c2) return b._c2 - a._c2;
+      if (a._c3 !== b._c3) return b._c3 - a._c3;
+      if (a._c4 !== b._c4) return a._c4 - b._c4;
+      return (a.learnerId||"").localeCompare(b.learnerId||"");
+    });
 
-    for (const cand of candidates){
-      const fk = familyKey(cand);
-      if (famPicked.has(fk)) continue;
-      if (famRank>=20) break;
+    const famMembers=new Map();
+    const famBest=new Map();
+    for (const r of scored){
+      const fk=familyKey(r);
+      if (!famMembers.has(fk)) famMembers.set(fk, []);
+      famMembers.get(fk).push(r);
+      if (!famBest.has(fk)) famBest.set(fk, r);
+    }
 
-      famPicked.add(fk);
-      famRank += 1;
+    const families = Array.from(famBest.entries()).map(([fk,best])=>({fk,best}));
+    families.sort((a,b)=>{
+      const A=a.best, B=b.best;
+      if (A._c1 !== B._c1) return B._c1 - A._c1;
+      if (A._c2 !== B._c2) return B._c2 - A._c2;
+      if (A._c3 !== B._c3) return B._c3 - A._c3;
+      if (A._c4 !== B._c4) return A._c4 - B._c4;
+      return (A.learnerId||"").localeCompare(B.learnerId||"");
+    });
 
-      const members = rows
-        .filter(r=>!POOL_EXCLUDE.has(r.pool) && familyKey(r)===fk)
-        .sort((a,b)=>{
-          const dp=poolPriority(b.pool)-poolPriority(a.pool);
-          if (dp!==0) return dp;
-          return (a.learnerId||"").localeCompare(b.learnerId||"");
-        });
+    let used=0;
+    for (const fam of families){
+      const members = (famMembers.get(fam.fk) || []).slice().sort((a,b)=>{
+        const dp = poolPriority(b.pool) - poolPriority(a.pool);
+        if (dp !== 0) return dp;
+        return (a.learnerId||"").localeCompare(b.learnerId||"");
+      });
 
-      const team = members[0]?.teamName || cand.teamName || "";
-      for (const m of members){
-        const reason = (m.learnerId===cand.learnerId && m.pool===cand.pool)
-          ? (cand.pool==="m2" ? "M2: not covered in selected month"
-             : (cand.pool==="expiring" ? "Expiring: high last-month consumption, not covered in selected month"
-             : (cand.pool==="expired" ? "Expired: high last-month consumption, not covered in selected month"
-             : "Period/Duration: low remaining, not covered in selected month")))
-          : "Same Family ID";
+      if (used + members.length > 20) continue;
 
+      for (const r of members){
+        const reason = `${recencyLabel(r._c1)} | ${r.pool.toUpperCase()} | LM${r.lastMonthConsumed} | Rem${r._c4}`;
         out.push({
-          team,
+          team: r.teamName || "",
           ea,
-          family_id: m.familyId || "",
-          family_rank: famRank,
-          learnerId: m.learnerId,
-          pool: m.pool,
-          output: `${ea} - ${m.learnerId} - ${m.pool}`,
+          learnerId: r.learnerId,
+          family_id: r.familyId || "",
+          pool: r.pool,
+          lastConn: r.lastConn || "",
+          lastMonthCons: r.lastMonthConsumed ?? "",
+          thisMonthCons: r.thisMonthConsumed ?? "",
+          remaining: (r.remaining==null? "" : r.remaining),
           reason
         });
       }
+      used += members.length;
+      if (used >= 20) break;
     }
   }
 
+  // Keep insertion order; but sort by team then EA for readability without breaking grouping
   out.sort((a,b)=>{
     if (a.team!==b.team) return a.team.localeCompare(b.team);
     if (a.ea!==b.ea) return a.ea.localeCompare(b.ea);
-    if (a.family_rank!==b.family_rank) return a.family_rank-b.family_rank;
-    const dp=poolPriority(b.pool)-poolPriority(a.pool);
-    if (dp!==0) return dp;
-    return (a.learnerId||"").localeCompare(b.learnerId||"");
+    return 0;
   });
 
   return out;
@@ -473,8 +503,8 @@ self.onmessage = (ev)=>{
     const t2End = maxDateInRange(t2Rows, monthStart, monthEndFull);
 
     self.postMessage({type:"progress", message:"Computing metrics..."});
-    const {eaRows, poolRows} = buildOverviews(t1Rows, t2Rows, monthStart, monthEndFull, t1End, t2End);
-    const recommendations = buildRecommendations(t2Rows, monthStart, t2End);
+    const {eaRows, poolRows} = buildMetricsAndRemark(t1Rows, t2Rows, monthStart, monthEndFull, t1End, t2End);
+    const recommendations = buildRecommendations(t2Rows, monthStart, t2End, monthEndFull);
     const exportBase = chooseExportBase(teamFilter, t2Rows, t2End);
 
     self.postMessage({
