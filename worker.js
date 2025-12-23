@@ -52,6 +52,12 @@ function diffDays(aIso, bIso){
 
 function excelDateToISO(v){
   if (v == null || v === "") return null;
+  // Treat 0 / "0" placeholders as empty (avoid 1970-01-01 artifacts)
+  if (v === 0) return null;
+  if (typeof v === "string"){
+    const t = v.trim();
+    if (t === "" || t === "0" || t === "0.0" || t === "-") return null;
+  }
 
   if (typeof v === "number" && isFinite(v)){
     const d = XLSX.SSF.parse_date_code(v);
@@ -64,6 +70,7 @@ function excelDateToISO(v){
 
   const s = v.toString().trim();
   if (!s) return null;
+  if (s === "0" || s === "0.0" || s === "-") return null;
 
   let m = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})(?:\s|T|$)/);
   if (m){
@@ -107,42 +114,15 @@ function readWorkbookFast(buf){
   });
 }
 
-// Fast dense-sheet cell read (dense:true returns ws as row arrays of cell objects)
-function getDenseVal(ws, r, c){
-  const row = ws ? ws[r] : null;
-  if (!row) return null;
-  const cell = row[c];
-  if (cell == null) return null;
-  if (typeof cell === "object" && "v" in cell) return cell.v;
-  return cell;
-}
-
-function denseRowToHeader(ws, range){
-  const hr = range.s.r;
-  const header = [];
-  for (let c=range.s.c; c<=range.e.c; c++){
-    const v = getDenseVal(ws, hr, c);
-    header.push(v == null ? "" : v.toString());
-  }
-  return {header, hr};
-}
-
 function headersContain(wb, col){
   for (const sn of wb.SheetNames){
     const ws = wb.Sheets[sn];
-    if (!ws || !ws["!ref"]) continue;
-    const range = XLSX.utils.decode_range(ws["!ref"]);
-    const hr = range.s.r;
-    for (let c=range.s.c; c<=range.e.c; c++){
-      const v = getDenseVal(ws, hr, c);
-      if (v == null) continue;
-      if (v.toString() === col) return true;
-    }
+    const aoa = XLSX.utils.sheet_to_json(ws,{header:1, defval:"", blankrows:false, raw:true});
+    if (!aoa || aoa.length<1) continue;
+    const header = (aoa[0]||[]).map(x=>x==null?"":x.toString());
+    if (header.includes(col)) return true;
   }
   return false;
-}
-function fixedTemplateWorks(wb){
-  return headersContain(wb, FIXED.learnerId) && headersContain(wb, FIXED.eaName) && headersContain(wb, FIXED.lastConn);
 }
 function fixedTemplateWorks(wb){
   return headersContain(wb, FIXED.learnerId) && headersContain(wb, FIXED.eaName) && headersContain(wb, FIXED.lastConn);
@@ -153,12 +133,10 @@ function parseWorkbook(wb, teamFilter){
   for (const sn of wb.SheetNames){
     const pool=poolNameFromSheet(sn);
     const ws=wb.Sheets[sn];
-    if (!ws || !ws["!ref"]) continue;
-    const range = XLSX.utils.decode_range(ws["!ref"]);
-    if (range.e.r - range.s.r < 1) continue;
+    const aoa = XLSX.utils.sheet_to_json(ws,{header:1, defval:"", blankrows:false, raw:true});
+    if (!aoa || aoa.length<2) continue;
 
-    const {header, hr} = denseRowToHeader(ws, range);
-
+    const header = aoa[0].map(x=>x==null?"":x.toString());
     const idx = {
       learnerId: header.indexOf(FIXED.learnerId),
       familyId: header.indexOf(FIXED.familyId),
@@ -171,35 +149,31 @@ function parseWorkbook(wb, teamFilter){
     };
     if (idx.learnerId<0 || idx.eaName<0 || idx.lastConn<0) continue;
 
-    const baseC = range.s.c;
+    for (let i=1;i<aoa.length;i++){
+      const r=aoa[i];
+      const learnerId = r[idx.learnerId];
+      const eaName = r[idx.eaName];
+      if (!learnerId || !eaName) continue;
 
-    for (let r=hr+1; r<=range.e.r; r++){
-      const learnerRaw = getDenseVal(ws, r, baseC + idx.learnerId);
-      const eaRaw = getDenseVal(ws, r, baseC + idx.eaName);
-      if (learnerRaw == null || learnerRaw === "" || eaRaw == null || eaRaw === "") continue;
+      const teamName = idx.teamName>=0 ? r[idx.teamName] : "";
+      if (teamFilter && teamName && teamName.toString().trim() !== teamFilter.trim()) continue;
 
-      const teamRaw = idx.teamName>=0 ? getDenseVal(ws, r, baseC + idx.teamName) : "";
-      const teamName = (teamRaw ?? "").toString().trim();
-      if (teamFilter && teamName && teamName !== teamFilter.trim()) continue;
-
-      const lastConnRaw = idx.lastConn>=0 ? getDenseVal(ws, r, baseC + idx.lastConn) : null;
-      const lastConn = excelDateToISO(lastConnRaw);
-
-      const familyRaw = idx.familyId>=0 ? getDenseVal(ws, r, baseC + idx.familyId) : "";
-      const lmRaw = idx.lastMonthConsumed>=0 ? getDenseVal(ws, r, baseC + idx.lastMonthConsumed) : null;
-      const tmRaw = idx.thisMonthConsumed>=0 ? getDenseVal(ws, r, baseC + idx.thisMonthConsumed) : null;
-      const remRaw = idx.remaining>=0 ? getDenseVal(ws, r, baseC + idx.remaining) : null;
+      const lastConn = excelDateToISO(idx.lastConn>=0 ? r[idx.lastConn] : null);
+      const familyId = idx.familyId>=0 ? (r[idx.familyId] ?? "") : "";
+      const lm = idx.lastMonthConsumed>=0 ? safeNum(r[idx.lastMonthConsumed]) : null;
+      const tm = idx.thisMonthConsumed>=0 ? safeNum(r[idx.thisMonthConsumed]) : null;
+      const rem = idx.remaining>=0 ? safeNum(r[idx.remaining]) : null;
 
       rows.push({
         pool,
-        learnerId: learnerRaw.toString().trim(),
-        familyId: (familyRaw??"").toString().trim(),
-        eaName: eaRaw.toString().trim(),
-        teamName,
+        learnerId: learnerId.toString().trim(),
+        familyId: (familyId??"").toString().trim(),
+        eaName: eaName.toString().trim(),
+        teamName: (teamName??"").toString().trim(),
         lastConn,
-        lastMonthConsumed: safeNum(lmRaw),
-        thisMonthConsumed: safeNum(tmRaw),
-        remaining: safeNum(remRaw)
+        lastMonthConsumed: lm,
+        thisMonthConsumed: tm,
+        remaining: rem
       });
     }
   }
@@ -282,7 +256,7 @@ function buildMetricsAndRemark(t1Rows, t2Rows, monthStart, monthEndFull, t1End, 
     const eaKey=k([team,ea]);
 
     if (!poolAgg.has(poolKey)){
-      poolAgg.set(poolKey,{team,pool,ea,totalSet:new Set(), t2MonthSet:new Set(), monthFirstSet:new Set(), monthFollowSet:new Set(), latestDaySet:new Set()});
+      poolAgg.set(poolKey,{team,pool,ea,totalSet:new Set(), t2MonthSet:new Set(), monthFirstSet:new Set(), monthFollowSet:new Set(), latestDaySet:new Set(), latestDate:null});
     }
     if (!eaAgg.has(eaKey)){
       eaAgg.set(eaKey,{team,ea,total:0,t2Month:0,monthFirst:0,monthFollow:0});
@@ -301,6 +275,15 @@ function buildMetricsAndRemark(t1Rows, t2Rows, monthStart, monthEndFull, t1End, 
     const t2Covered = t2End ? inRange(d2, monthStart, t2End) : false;
 
     if (t2Covered) pa.t2MonthSet.add(r2.learnerId);
+    // Pool-level latest day in the selected month window (for added_connected in By pool)
+    if (t2Covered && isValidISODate(d2)){
+      if (!pa.latestDate || d2 > pa.latestDate){
+        pa.latestDate = d2;
+        pa.latestDaySet = new Set([r2.learnerId]);
+      } else if (d2 === pa.latestDate){
+        pa.latestDaySet.add(r2.learnerId);
+      }
+    }
 
     if (t2End && inRange(d2, periodStartNext, t2End) && t2Covered){
       if (!t1Covered) pa.monthFirstSet.add(r2.learnerId);
@@ -309,8 +292,6 @@ function buildMetricsAndRemark(t1Rows, t2Rows, monthStart, monthEndFull, t1End, 
 
     if (t2End && isValidISODate(d2) && d2===t2End){
       latestDayCountByEA.get(eaKey).add(r2.learnerId);
-      pa.latestDaySet.add(r2.learnerId);
-
       const m = latestDayPoolByEA.get(eaKey);
       const existing = m.get(r2.learnerId);
       if (!existing || poolPriority(pool) > poolPriority(existing)){
@@ -522,8 +503,8 @@ function buildRecommendations(t2Rows, monthStart, t2End, monthEndFull){
       }
       const daysMostRecent = mostRecent ? diffDays(refDate, mostRecent) : 9999;
 
-      // Exclude very-recent connects (<=7d) from any follow-up buckets
-      if (anyCovered && daysMostRecent <= 7) continue;
+      // Exclude families with any very-recent connect within 14 days (your rule: if one ID <=14d, all IDs not recommended)
+      if (mostRecent && daysMostRecent <= 14) continue;
 
       // Build best member for sorting: pick member with highest pool priority, then older lastConn, then higher LM, then lower remaining
       let best = members[0];
@@ -546,8 +527,7 @@ function buildRecommendations(t2Rows, monthStart, t2End, monthEndFull){
       if (anyCovered){
         const daysOldest = oldest ? diffDays(refDate, oldest) : 9999;
         if (daysOldest > 14){ bucket = 1; label = ">14d in month"; }
-        else if (daysOldest > 7){ bucket = 2; label = "8-14d in month"; }
-        else { continue; } // <=7 already excluded above, but keep safety
+        else { continue; } // <=14d follow-up families are not recommended
       }
 
       // Apply gating using overall EA coverage (ALL pools) based on the member's team
@@ -555,7 +535,6 @@ function buildRecommendations(t2Rows, monthStart, t2End, monthEndFull){
       const covRate = eaCovRate.get(teamKey) ?? 0;
 
       if (bucket === 1 && covRate < TH_INCLUDE_COVERED) continue;
-      if (bucket === 2 && covRate < TH_INCLUDE_RECENT) continue;
 
       famInfos.push({fk, members, best, bucket, label, covRate});
     }
