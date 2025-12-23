@@ -88,7 +88,7 @@ worker.onmessage = (ev)=>{
     "team","ea","total_records",
     "month_connected","month_rate",
     "added_connected",
-    "period_first","period_followup",
+    "month_first","month_follow_up",
     "remark"
   ];
   renderTable("eaTable", colsEA, lastResults.eaOverview);
@@ -96,7 +96,7 @@ worker.onmessage = (ev)=>{
   const colsPool = [
     "team","pool","ea","total_records",
     "month_connected","month_rate",
-    "period_first","period_followup"
+    "month_first","month_follow_up"
   ];
   renderTable("poolTable", colsPool, lastResults.poolOverview);
 

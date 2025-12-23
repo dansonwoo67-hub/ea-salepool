@@ -24,7 +24,7 @@ main{max-width:1500px;margin:0 auto;padding:0 20px 40px}
 .tabpane.active{display:block}
 .toolbar{display:flex;justify-content:flex-end;margin:8px 0}
 .tableWrap{overflow:auto;border:1px solid var(--line);border-radius:12px}
-table{width:100%;border-collapse:collapse;min-width:1500px;background:#0f1522}
+table{width:100%;border-collapse:collapse;min-width:1600px;background:#0f1522}
 th,td{padding:8px 10px;border-bottom:1px solid var(--line);font-size:12px;white-space:nowrap}
 th{position:sticky;top:0;background:#0f1522;z-index:1;text-align:left}
 

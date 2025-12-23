@@ -20,7 +20,7 @@ function poolNameFromSheet(sheetName){
   if (n.includes("expiring")) return "expiring";
   if (n.includes("duration")) return "duration";
   if (n.includes("expired")) return "expired";
-  if (n === "exp" || n.startsWith("exp ")) return "expired";
+  if (n === "exp" || n === "exp " || n.startsWith("exp ")) return "expired"; // EXP sheet = expired (distinct from expiring)
   if (n.includes("period")) return "period";
   if (n.includes("m1")) return "m1";
   return n;
@@ -237,7 +237,8 @@ function buildMetricsAndRemark(t1Rows, t2Rows, monthStart, monthEndFull, t1End, 
 
   const poolAgg=new Map();
   const eaAgg=new Map();
-  const poolDeltaByEA=new Map(); // eaKey -> pool -> delta
+  const latestDayPoolByEA=new Map();
+  const latestDayCountByEA=new Map();
 
   const periodStart = t1End ? t1End : addDays(monthStart, -1);
   const periodStartNext = addDays(periodStart, 1);
@@ -248,12 +249,13 @@ function buildMetricsAndRemark(t1Rows, t2Rows, monthStart, monthEndFull, t1End, 
     const eaKey=k([team,ea]);
 
     if (!poolAgg.has(poolKey)){
-      poolAgg.set(poolKey,{team,pool,ea,totalSet:new Set(), t1MonthSet:new Set(), t2MonthSet:new Set(), pFirstSet:new Set(), pFollowSet:new Set()});
+      poolAgg.set(poolKey,{team,pool,ea,totalSet:new Set(), t2MonthSet:new Set(), monthFirstSet:new Set(), monthFollowSet:new Set()});
     }
     if (!eaAgg.has(eaKey)){
-      eaAgg.set(eaKey,{team,ea,total:0,t1Month:0,t2Month:0,pFirst:0,pFollow:0});
+      eaAgg.set(eaKey,{team,ea,total:0,t2Month:0,monthFirst:0,monthFollow:0});
     }
-    if (!poolDeltaByEA.has(eaKey)) poolDeltaByEA.set(eaKey, new Map());
+    if (!latestDayPoolByEA.has(eaKey)) latestDayPoolByEA.set(eaKey, new Map());
+    if (!latestDayCountByEA.has(eaKey)) latestDayCountByEA.set(eaKey, new Set());
 
     const pa=poolAgg.get(poolKey);
     pa.totalSet.add(r2.learnerId);
@@ -265,22 +267,30 @@ function buildMetricsAndRemark(t1Rows, t2Rows, monthStart, monthEndFull, t1End, 
     const t1Covered = t1End ? inRange(d1, monthStart, t1End) : false;
     const t2Covered = t2End ? inRange(d2, monthStart, t2End) : false;
 
-    if (t1Covered) pa.t1MonthSet.add(r2.learnerId);
     if (t2Covered) pa.t2MonthSet.add(r2.learnerId);
 
     if (t2End && inRange(d2, periodStartNext, t2End) && t2Covered){
-      if (!t1Covered) pa.pFirstSet.add(r2.learnerId);
-      else if (isValidISODate(d1) && isValidISODate(d2) && d2>d1) pa.pFollowSet.add(r2.learnerId);
+      if (!t1Covered) pa.monthFirstSet.add(r2.learnerId);
+      else if (isValidISODate(d1) && isValidISODate(d2) && d2>d1) pa.monthFollowSet.add(r2.learnerId);
+    }
+
+    if (t2End && isValidISODate(d2) && d2===t2End){
+      latestDayCountByEA.get(eaKey).add(r2.learnerId);
+
+      const m = latestDayPoolByEA.get(eaKey);
+      const existing = m.get(r2.learnerId);
+      if (!existing || poolPriority(pool) > poolPriority(existing)){
+        m.set(r2.learnerId, pool);
+      }
     }
   }
 
-  // Build pool overview + accumulate EA
   const poolRows=[];
   for (const pa of poolAgg.values()){
     const total=pa.totalSet.size;
     const t2c=pa.t2MonthSet.size;
-    const pFirst=pa.pFirstSet.size;
-    const pFollow=pa.pFollowSet.size;
+    const mf=pa.monthFirstSet.size;
+    const mfu=pa.monthFollowSet.size;
 
     poolRows.push({
       team:pa.team,
@@ -289,43 +299,38 @@ function buildMetricsAndRemark(t1Rows, t2Rows, monthStart, monthEndFull, t1End, 
       total_records: total,
       month_connected: t2c,
       month_rate: total? (t2c/total*100).toFixed(1)+"%":"0.0%",
-      period_first: pFirst,
-      period_followup: pFollow
+      month_first: mf,
+      month_follow_up: mfu
     });
 
     const eaKey=k([pa.team, pa.ea]);
     const ea=eaAgg.get(eaKey);
     ea.total += total;
     ea.t2Month += t2c;
-    ea.t1Month += pa.t1MonthSet.size;
-    ea.pFirst += pFirst;
-    ea.pFollow += pFollow;
-
-    const delta = pa.t2MonthSet.size - pa.t1MonthSet.size;
-    if (delta !== 0){
-      poolDeltaByEA.get(eaKey).set(pa.pool, delta);
-    }
+    ea.monthFirst += mf;
+    ea.monthFollow += mfu;
   }
 
   const eaRows=[];
   for (const [eaKey, ea] of eaAgg.entries()){
     const total=ea.total;
-    const added = ea.t2Month - ea.t1Month;
+    const addedSet = latestDayCountByEA.get(eaKey) || new Set();
+    const added = addedSet.size;
 
-    const poolDelta = poolDeltaByEA.get(eaKey) || new Map();
-    const parts=[];
-    const order=["m2","expiring","duration","period","expired"];
-    for (const p of order){
-      if (!poolDelta.has(p)) continue;
-      const v=poolDelta.get(p);
-      if (v>0){
-        const label = (p==="m2") ? "M2" : (p==="period" ? "duration" : p);
-        parts.push(`${label}-${v}`);
-      }
+    const learnerToPool = latestDayPoolByEA.get(eaKey) || new Map();
+    const counts=new Map();
+    for (const lid of addedSet){
+      const p = learnerToPool.get(lid) || "unknown";
+      const label = (p==="m2") ? "M2" : (p==="period" ? "duration" : p);
+      counts.set(label, (counts.get(label)||0)+1);
     }
-    for (const [p,v] of poolDelta.entries()){
-      if (order.includes(p)) continue;
-      if (v>0) parts.push(`${p}-${v}`);
+    const order=["M2","expiring","duration","expired","unknown"];
+    const parts=[];
+    for (const p of order){
+      if (counts.has(p)) parts.push(`${p}-${counts.get(p)}`);
+    }
+    for (const [p,c] of counts.entries()){
+      if (!order.includes(p)) parts.push(`${p}-${c}`);
     }
 
     eaRows.push({
@@ -335,8 +340,8 @@ function buildMetricsAndRemark(t1Rows, t2Rows, monthStart, monthEndFull, t1End, 
       month_connected: ea.t2Month,
       month_rate: total? (ea.t2Month/total*100).toFixed(1)+"%":"0.0%",
       added_connected: added,
-      period_first: ea.pFirst,
-      period_followup: ea.pFollow,
+      month_first: ea.monthFirst,
+      month_follow_up: ea.monthFollow,
       remark: parts.join(", ")
     });
   }
@@ -351,24 +356,41 @@ function buildMetricsAndRemark(t1Rows, t2Rows, monthStart, monthEndFull, t1End, 
   return {eaRows, poolRows};
 }
 
-function recencyRank(refDate, monthStart, lastConn){
-  if (!isValidISODate(lastConn) || !isValidISODate(refDate)) return 4;
-  const days = diffDays(refDate, lastConn);
-  if (days >= 21) return 4;
-  const inMonth = inRange(lastConn, monthStart, refDate);
-  if (!inMonth) return 3;
-  if (days > 14) return 2;
-  return 1;
+function monthCovered(refDate, monthStart, lastConn){
+  return inRange(lastConn, monthStart, refDate);
 }
-function recencyLabel(rank){
-  if (rank===4) return "21d+ no connect";
-  if (rank===3) return "not covered this month";
-  if (rank===2) return ">14d in month";
-  return "<=14d in month";
+
+function buildCoverageMapByEAandPool(t2Rows, monthStart, refDate){
+  const total=new Map();
+  const covered=new Map();
+  for (const r of t2Rows){
+    if (POOL_EXCLUDE.has(r.pool)) continue;
+    const pr=poolPriority(r.pool);
+    if (pr<=0) continue;
+    const key=k([r.teamName, r.eaName, r.pool]);
+    if (!total.has(key)) total.set(key, new Set());
+    total.get(key).add(r.learnerId);
+    if (monthCovered(refDate, monthStart, r.lastConn)){
+      if (!covered.has(key)) covered.set(key, new Set());
+      covered.get(key).add(r.learnerId);
+    }
+  }
+  const rate=new Map();
+  for (const [key, set] of total.entries()){
+    const cov = covered.get(key)?.size || 0;
+    const tot = set.size || 0;
+    rate.set(key, tot ? (cov/tot) : 0);
+  }
+  return {rate};
 }
 
 function buildRecommendations(t2Rows, monthStart, t2End, monthEndFull){
   const refDate = t2End || monthEndFull;
+  const {rate: poolRate} = buildCoverageMapByEAandPool(t2Rows, monthStart, refDate);
+
+  const TH_INCLUDE_COVERED = 0.50; // allow covered (>14d) only if pool month coverage >= 50%
+  const TH_INCLUDE_RECENT  = 0.65; // allow covered (<=14d) only if pool month coverage >= 65%
+
   const byEA=new Map();
   for (const r of t2Rows){
     if (POOL_EXCLUDE.has(r.pool)) continue;
@@ -382,7 +404,6 @@ function buildRecommendations(t2Rows, monthStart, t2End, monthEndFull){
   const familyKey = (r)=> (r.familyId && r.familyId!=="") ? `F:${r.familyId}` : `L:${r.learnerId}`;
 
   for (const [ea, rows] of byEA.entries()){
-    // Condition 3 filter
     const filtered = rows.filter(r=>{
       const lm = r.lastMonthConsumed;
       const tm = r.thisMonthConsumed;
@@ -391,19 +412,50 @@ function buildRecommendations(t2Rows, monthStart, t2End, monthEndFull){
       return true;
     });
 
-    const scored = filtered.map(r=>{
-      const c1 = recencyRank(refDate, monthStart, r.lastConn);
-      const c2 = poolPriority(r.pool);
-      const c3 = r.lastMonthConsumed ?? 0;
-      const c4 = (r.remaining==null? 999999 : r.remaining); // smaller is better
-      return {...r, _c1:c1, _c2:c2, _c3:c3, _c4:c4};
-    });
+    const scored = [];
+    for (const r of filtered){
+      const poolKey = k([r.teamName, r.eaName, r.pool]);
+      const covRate = poolRate.get(poolKey) ?? 0;
+
+      const coveredThisMonth = monthCovered(refDate, monthStart, r.lastConn);
+      const days = isValidISODate(r.lastConn) ? diffDays(refDate, r.lastConn) : 9999;
+
+      if (coveredThisMonth){
+        if (days <= 14 && covRate < TH_INCLUDE_RECENT) continue;
+        if (days > 14 && covRate < TH_INCLUDE_COVERED) continue;
+      }
+
+      let monthBucket = 0;
+      if (coveredThisMonth){
+        monthBucket = (days <= 14) ? 2 : 1;
+      }
+
+      let recLabel = "not covered this month";
+      if (isValidISODate(r.lastConn)){
+        if (days >= 21) recLabel = "21d+ no connect";
+        else if (!coveredThisMonth) recLabel = "not covered this month";
+        else if (days > 14) recLabel = ">14d in month";
+        else recLabel = "<=14d in month";
+      }
+
+      scored.push({
+        ...r,
+        _poolP: poolPriority(r.pool),
+        _monthBucket: monthBucket,
+        _days: days,
+        _lm: r.lastMonthConsumed ?? 0,
+        _rem: (r.remaining==null? 999999 : r.remaining),
+        _covRate: covRate,
+        _recLabel: recLabel
+      });
+    }
 
     scored.sort((a,b)=>{
-      if (a._c1 !== b._c1) return b._c1 - a._c1;
-      if (a._c2 !== b._c2) return b._c2 - a._c2;
-      if (a._c3 !== b._c3) return b._c3 - a._c3;
-      if (a._c4 !== b._c4) return a._c4 - b._c4;
+      if (a._poolP !== b._poolP) return b._poolP - a._poolP;
+      if (a._monthBucket !== b._monthBucket) return a._monthBucket - b._monthBucket;
+      if (a._days !== b._days) return b._days - a._days;
+      if (a._lm !== b._lm) return b._lm - a._lm;
+      if (a._rem !== b._rem) return a._rem - b._rem;
       return (a.learnerId||"").localeCompare(b.learnerId||"");
     });
 
@@ -419,10 +471,11 @@ function buildRecommendations(t2Rows, monthStart, t2End, monthEndFull){
     const families = Array.from(famBest.entries()).map(([fk,best])=>({fk,best}));
     families.sort((a,b)=>{
       const A=a.best, B=b.best;
-      if (A._c1 !== B._c1) return B._c1 - A._c1;
-      if (A._c2 !== B._c2) return B._c2 - A._c2;
-      if (A._c3 !== B._c3) return B._c3 - A._c3;
-      if (A._c4 !== B._c4) return A._c4 - B._c4;
+      if (A._poolP !== B._poolP) return B._poolP - A._poolP;
+      if (A._monthBucket !== B._monthBucket) return A._monthBucket - B._monthBucket;
+      if (A._days !== B._days) return B._days - A._days;
+      if (A._lm !== B._lm) return B._lm - A._lm;
+      if (A._rem !== B._rem) return A._rem - B._rem;
       return (A.learnerId||"").localeCompare(B.learnerId||"");
     });
 
@@ -437,7 +490,8 @@ function buildRecommendations(t2Rows, monthStart, t2End, monthEndFull){
       if (used + members.length > 20) continue;
 
       for (const r of members){
-        const reason = `${recencyLabel(r._c1)} | ${r.pool.toUpperCase()} | LM${r.lastMonthConsumed} | Rem${r._c4}`;
+        const poolLabel = (r.pool==="m2") ? "M2" : (r.pool==="period" ? "duration" : r.pool);
+        const reason = `${poolLabel} | ${r._recLabel} | LM${r.lastMonthConsumed} | Rem${r._rem}`;
         out.push({
           team: r.teamName || "",
           ea,
@@ -456,7 +510,6 @@ function buildRecommendations(t2Rows, monthStart, t2End, monthEndFull){
     }
   }
 
-  // Keep insertion order; but sort by team then EA for readability without breaking grouping
   out.sort((a,b)=>{
     if (a.team!==b.team) return a.team.localeCompare(b.team);
     if (a.ea!==b.ea) return a.ea.localeCompare(b.ea);
