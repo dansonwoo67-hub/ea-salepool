@@ -96,6 +96,7 @@ worker.onmessage = (ev)=>{
   const colsPool = [
     "team","pool","ea","total_records",
     "month_connected","month_rate",
+    "added_connected",
     "month_first","month_follow_up"
   ];
   renderTable("poolTable", colsPool, lastResults.poolOverview);

@@ -249,7 +249,7 @@ function buildMetricsAndRemark(t1Rows, t2Rows, monthStart, monthEndFull, t1End, 
     const eaKey=k([team,ea]);
 
     if (!poolAgg.has(poolKey)){
-      poolAgg.set(poolKey,{team,pool,ea,totalSet:new Set(), t2MonthSet:new Set(), monthFirstSet:new Set(), monthFollowSet:new Set()});
+      poolAgg.set(poolKey,{team,pool,ea,totalSet:new Set(), t2MonthSet:new Set(), monthFirstSet:new Set(), monthFollowSet:new Set(), latestDaySet:new Set()});
     }
     if (!eaAgg.has(eaKey)){
       eaAgg.set(eaKey,{team,ea,total:0,t2Month:0,monthFirst:0,monthFollow:0});
@@ -276,6 +276,7 @@ function buildMetricsAndRemark(t1Rows, t2Rows, monthStart, monthEndFull, t1End, 
 
     if (t2End && isValidISODate(d2) && d2===t2End){
       latestDayCountByEA.get(eaKey).add(r2.learnerId);
+      pa.latestDaySet.add(r2.learnerId);
 
       const m = latestDayPoolByEA.get(eaKey);
       const existing = m.get(r2.learnerId);
@@ -299,6 +300,7 @@ function buildMetricsAndRemark(t1Rows, t2Rows, monthStart, monthEndFull, t1End, 
       total_records: total,
       month_connected: t2c,
       month_rate: total? (t2c/total*100).toFixed(1)+"%":"0.0%",
+      added_connected: (pa.latestDaySet ? pa.latestDaySet.size : 0),
       month_first: mf,
       month_follow_up: mfu
     });
@@ -386,24 +388,50 @@ function buildCoverageMapByEAandPool(t2Rows, monthStart, refDate){
 
 function buildRecommendations(t2Rows, monthStart, t2End, monthEndFull){
   const refDate = t2End || monthEndFull;
-  const {rate: poolRate} = buildCoverageMapByEAandPool(t2Rows, monthStart, refDate);
 
-  const TH_INCLUDE_COVERED = 0.50; // allow covered (>14d) only if pool month coverage >= 50%
-  const TH_INCLUDE_RECENT  = 0.65; // allow covered (<=14d) only if pool month coverage >= 65%
-
-  const byEA=new Map();
+  // Overall EA month coverage (ALL pools excluding M1). Used for follow-up gating thresholds.
+  // totalEA: unique learnerId per (team,ea) across all pools; coveredEA: those with lastConn in month.
+  const totalEA = new Map();   // team||ea -> Set learnerId
+  const coveredEA = new Map(); // team||ea -> Set learnerId
   for (const r of t2Rows){
     if (POOL_EXCLUDE.has(r.pool)) continue;
-    const pr=poolPriority(r.pool);
-    if (pr<=0) continue;
-    if (!byEA.has(r.eaName)) byEA.set(r.eaName,[]);
+    const pr = poolPriority(r.pool);
+    if (pr <= 0) continue;
+    const eaKey = k([r.teamName, r.eaName]);
+    if (!totalEA.has(eaKey)) totalEA.set(eaKey, new Set());
+    totalEA.get(eaKey).add(r.learnerId);
+
+    if (monthCovered(refDate, monthStart, r.lastConn)){
+      if (!coveredEA.has(eaKey)) coveredEA.set(eaKey, new Set());
+      coveredEA.get(eaKey).add(r.learnerId);
+    }
+  }
+  const eaCovRate = new Map(); // team||ea -> 0..1
+  for (const [eaKey, set] of totalEA.entries()){
+    const tot = set.size || 0;
+    const cov = coveredEA.get(eaKey)?.size || 0;
+    eaCovRate.set(eaKey, tot ? (cov/tot) : 0);
+  }
+
+  // Your thresholds apply to overall EA coverage (ALL pools), not pool coverage.
+  const TH_INCLUDE_COVERED = 0.50; // allow follow-up (>14d) only if overall coverage >= 50%
+  const TH_INCLUDE_RECENT  = 0.65; // allow follow-up (<=14d) only if overall coverage >= 65%
+
+  // Group by EA first
+  const byEA = new Map();
+  for (const r of t2Rows){
+    if (POOL_EXCLUDE.has(r.pool)) continue;
+    const pr = poolPriority(r.pool);
+    if (pr <= 0) continue;
+    if (!byEA.has(r.eaName)) byEA.set(r.eaName, []);
     byEA.get(r.eaName).push(r);
   }
 
-  const out=[];
+  const out = [];
   const familyKey = (r)=> (r.familyId && r.familyId!=="") ? `F:${r.familyId}` : `L:${r.learnerId}`;
 
   for (const [ea, rows] of byEA.entries()){
+    // Hard filters (Condition 3)
     const filtered = rows.filter(r=>{
       const lm = r.lastMonthConsumed;
       const tm = r.thisMonthConsumed;
@@ -412,86 +440,123 @@ function buildRecommendations(t2Rows, monthStart, t2End, monthEndFull){
       return true;
     });
 
-    const scored = [];
+    // Build families
+    const famMembers = new Map(); // fk -> members
     for (const r of filtered){
-      const poolKey = k([r.teamName, r.eaName, r.pool]);
-      const covRate = poolRate.get(poolKey) ?? 0;
-
-      const coveredThisMonth = monthCovered(refDate, monthStart, r.lastConn);
-      const days = isValidISODate(r.lastConn) ? diffDays(refDate, r.lastConn) : 9999;
-
-      if (coveredThisMonth){
-        if (days <= 14 && covRate < TH_INCLUDE_RECENT) continue;
-        if (days > 14 && covRate < TH_INCLUDE_COVERED) continue;
-      }
-
-      let monthBucket = 0;
-      if (coveredThisMonth){
-        monthBucket = (days <= 14) ? 2 : 1;
-      }
-
-      let recLabel = "not covered this month";
-      if (isValidISODate(r.lastConn)){
-        if (days >= 21) recLabel = "21d+ no connect";
-        else if (!coveredThisMonth) recLabel = "not covered this month";
-        else if (days > 14) recLabel = ">14d in month";
-        else recLabel = "<=14d in month";
-      }
-
-      scored.push({
-        ...r,
-        _poolP: poolPriority(r.pool),
-        _monthBucket: monthBucket,
-        _days: days,
-        _lm: r.lastMonthConsumed ?? 0,
-        _rem: (r.remaining==null? 999999 : r.remaining),
-        _covRate: covRate,
-        _recLabel: recLabel
-      });
-    }
-
-    scored.sort((a,b)=>{
-      if (a._poolP !== b._poolP) return b._poolP - a._poolP;
-      if (a._monthBucket !== b._monthBucket) return a._monthBucket - b._monthBucket;
-      if (a._days !== b._days) return b._days - a._days;
-      if (a._lm !== b._lm) return b._lm - a._lm;
-      if (a._rem !== b._rem) return a._rem - b._rem;
-      return (a.learnerId||"").localeCompare(b.learnerId||"");
-    });
-
-    const famMembers=new Map();
-    const famBest=new Map();
-    for (const r of scored){
-      const fk=familyKey(r);
+      const fk = familyKey(r);
       if (!famMembers.has(fk)) famMembers.set(fk, []);
       famMembers.get(fk).push(r);
-      if (!famBest.has(fk)) famBest.set(fk, r);
     }
 
-    const families = Array.from(famBest.entries()).map(([fk,best])=>({fk,best}));
-    families.sort((a,b)=>{
-      const A=a.best, B=b.best;
-      if (A._poolP !== B._poolP) return B._poolP - A._poolP;
-      if (A._monthBucket !== B._monthBucket) return A._monthBucket - B._monthBucket;
-      if (A._days !== B._days) return B._days - A._days;
-      if (A._lm !== B._lm) return B._lm - A._lm;
-      if (A._rem !== B._rem) return A._rem - B._rem;
-      return (A.learnerId||"").localeCompare(B.learnerId||"");
-    });
+    // Determine family eligibility buckets:
+    // bucket 0: ALL members NOT covered this month (always eligible; highest priority)
+    // bucket 1: ALL members covered this month AND oldest lastConn >14d (eligible only if overall coverage>=50%)
+    // bucket 2: ALL members covered this month AND oldest lastConn in 8-14d (eligible only if overall coverage>=65%)
+    // Any MIXED family (some covered, some not) is excluded completely per your rule.
+    // Also exclude families whose best candidate is <=7d (too recent).
+    const eaKeyAnyTeam = (() => {
+      // Try infer team from rows (may contain multiple teams; we’ll compute per team in sorting via best member)
+      // If multiple teams exist for same EA, we will compute gating rate using each member's team in selection.
+      return null;
+    })();
 
-    let used=0;
-    for (const fam of families){
-      const members = (famMembers.get(fam.fk) || []).slice().sort((a,b)=>{
+    const famInfos = [];
+    for (const [fk, members] of famMembers.entries()){
+      // Normalize members sort within family by pool priority for output (M2 first)
+      members.sort((a,b)=>{
         const dp = poolPriority(b.pool) - poolPriority(a.pool);
         if (dp !== 0) return dp;
         return (a.learnerId||"").localeCompare(b.learnerId||"");
       });
 
+      // Covered state
+      const coveredFlags = members.map(r => monthCovered(refDate, monthStart, r.lastConn));
+      const anyCovered = coveredFlags.some(Boolean);
+      const anyUncovered = coveredFlags.some(x=>!x);
+
+      // Mixed family exclusion
+      if (anyCovered && anyUncovered) continue;
+
+      // Compute family recency: use the MOST recent lastConn within family (for follow-up freshness check)
+      let mostRecent = null;
+      let oldest = null;
+      for (const r of members){
+        const d = r.lastConn;
+        if (isValidISODate(d)){
+          if (!mostRecent || d > mostRecent) mostRecent = d;
+          if (!oldest || d < oldest) oldest = d;
+        }
+      }
+      const daysMostRecent = mostRecent ? diffDays(refDate, mostRecent) : 9999;
+
+      // Exclude very-recent connects (<=7d) from any follow-up buckets
+      if (anyCovered && daysMostRecent <= 7) continue;
+
+      // Build best member for sorting: pick member with highest pool priority, then older lastConn, then higher LM, then lower remaining
+      let best = members[0];
+      for (const r of members){
+        const a = r, b = best;
+        const ap = poolPriority(a.pool), bp = poolPriority(b.pool);
+        if (ap !== bp){ if (ap > bp) best = a; continue; }
+        const ad = isValidISODate(a.lastConn) ? a.lastConn : "0000-00-00";
+        const bd = isValidISODate(b.lastConn) ? b.lastConn : "0000-00-00";
+        if (ad !== bd){ if (ad < bd) best = a; continue; } // older date preferred within family when same poolP
+        const alm = a.lastMonthConsumed ?? 0, blm = b.lastMonthConsumed ?? 0;
+        if (alm !== blm){ if (alm > blm) best = a; continue; }
+        const arem = (a.remaining==null? 999999 : a.remaining);
+        const brem = (b.remaining==null? 999999 : b.remaining);
+        if (arem !== brem){ if (arem < brem) best = a; continue; }
+      }
+
+      let bucket = 0;
+      let label = "not covered this month";
+      if (anyCovered){
+        const daysOldest = oldest ? diffDays(refDate, oldest) : 9999;
+        if (daysOldest > 14){ bucket = 1; label = ">14d in month"; }
+        else if (daysOldest > 7){ bucket = 2; label = "8-14d in month"; }
+        else { continue; } // <=7 already excluded above, but keep safety
+      }
+
+      // Apply gating using overall EA coverage (ALL pools) based on the member's team
+      const teamKey = k([best.teamName, best.eaName]);
+      const covRate = eaCovRate.get(teamKey) ?? 0;
+
+      if (bucket === 1 && covRate < TH_INCLUDE_COVERED) continue;
+      if (bucket === 2 && covRate < TH_INCLUDE_RECENT) continue;
+
+      famInfos.push({fk, members, best, bucket, label, covRate});
+    }
+
+    // Sort families:
+    // 1) bucket: 0 (uncovered) first always
+    // 2) pool priority of best
+    // 3) older lastConn (uncovered: older lastConn first; covered: older first as well)
+    // 4) higher lastMonthConsumed
+    // 5) lower remaining
+    famInfos.sort((x,y)=>{
+      if (x.bucket !== y.bucket) return x.bucket - y.bucket;
+      const xp = poolPriority(x.best.pool), yp = poolPriority(y.best.pool);
+      if (xp !== yp) return yp - xp;
+      const xd = isValidISODate(x.best.lastConn) ? x.best.lastConn : "9999-99-99";
+      const yd = isValidISODate(y.best.lastConn) ? y.best.lastConn : "9999-99-99";
+      if (xd !== yd) return xd.localeCompare(yd); // older first
+      const xl = x.best.lastMonthConsumed ?? 0, yl = y.best.lastMonthConsumed ?? 0;
+      if (xl !== yl) return yl - xl;
+      const xr = (x.best.remaining==null? 999999 : x.best.remaining);
+      const yr = (y.best.remaining==null? 999999 : y.best.remaining);
+      if (xr !== yr) return xr - yr;
+      return (x.best.learnerId||"").localeCompare(y.best.learnerId||"");
+    });
+
+    // Emit max 20 IDs per EA, keeping family together (skip family if would exceed 20)
+    let used = 0;
+    for (const fam of famInfos){
+      const members = fam.members;
       if (used + members.length > 20) continue;
 
       for (const r of members){
         const poolLabel = (r.pool==="m2") ? "M2" : (r.pool==="period" ? "duration" : r.pool);
-        const reason = `${poolLabel} | ${r._recLabel} | LM${r.lastMonthConsumed} | Rem${r._rem}`;
+        const reason = `${poolLabel} | ${fam.label} | LM${r.lastMonthConsumed} | Rem${(r.remaining==null? "" : r.remaining)}`;
         out.push({
           team: r.teamName || "",
           ea,
@@ -519,7 +584,7 @@ function buildRecommendations(t2Rows, monthStart, t2End, monthEndFull){
   return out;
 }
 
-function chooseExportBase(teamFilter, t2Rows, t2End){
+function chooseExportBase(teamFilter, t2Rows, t2End){(teamFilter, t2Rows, t2End){
   let team="ALL";
   if (teamFilter && teamFilter.trim()!=="") team = teamFilter.trim();
   else {

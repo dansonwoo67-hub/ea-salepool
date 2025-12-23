@@ -1,4 +1,4 @@
-# EA Coverage Dashboard (v13)
+# EA Coverage Dashboard (v15)
 
 Fixes per your feedback:
 1) EA overview:
@@ -16,3 +16,14 @@ Fixes per your feedback:
      - include covered (>14d) only if pool month coverage >= 50%
      - include covered (<=14d) only if pool month coverage >= 65%
    - Keep Family ID together; max 20 IDs per EA (hard cap; skip a family if it would exceed 20).
+
+
+v14 updates:
+- Recommended IDs: exclude records connected within the last 7 days (even if pool coverage is high).
+- By pool table: added `added_connected` (T2 latest-day connects per pool).
+
+
+v15 updates:
+- Recommendations: "not connected this month" always prioritized.
+- Family rule: if a family contains ANY record connected this month, the whole family is excluded from the "uncovered" bucket; mixed families (some covered, some not) are fully excluded (no recommendations for that family).
+- Follow-up gating uses OVERALL EA month coverage (all pools excluding M1), not per-pool coverage.
