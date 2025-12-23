@@ -52,6 +52,12 @@ function diffDays(aIso, bIso){
 
 function excelDateToISO(v){
   if (v == null || v === "") return null;
+  // Treat 0 / "0" placeholders as empty (avoid 1970-01-01 artifacts)
+  if (v === 0) return null;
+  if (typeof v === "string"){
+    const t = v.trim();
+    if (t === "" || t === "0" || t === "0.0" || t === "-") return null;
+  }
 
   if (typeof v === "number" && isFinite(v)){
     const d = XLSX.SSF.parse_date_code(v);
@@ -64,6 +70,7 @@ function excelDateToISO(v){
 
   const s = v.toString().trim();
   if (!s) return null;
+  if (s === "0" || s === "0.0" || s === "-") return null;
 
   let m = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})(?:\s|T|$)/);
   if (m){
@@ -249,7 +256,7 @@ function buildMetricsAndRemark(t1Rows, t2Rows, monthStart, monthEndFull, t1End, 
     const eaKey=k([team,ea]);
 
     if (!poolAgg.has(poolKey)){
-      poolAgg.set(poolKey,{team,pool,ea,totalSet:new Set(), t2MonthSet:new Set(), monthFirstSet:new Set(), monthFollowSet:new Set(), latestDaySet:new Set()});
+      poolAgg.set(poolKey,{team,pool,ea,totalSet:new Set(), t2MonthSet:new Set(), monthFirstSet:new Set(), monthFollowSet:new Set(), latestDaySet:new Set(), latestDate:null});
     }
     if (!eaAgg.has(eaKey)){
       eaAgg.set(eaKey,{team,ea,total:0,t2Month:0,monthFirst:0,monthFollow:0});
@@ -268,6 +275,15 @@ function buildMetricsAndRemark(t1Rows, t2Rows, monthStart, monthEndFull, t1End, 
     const t2Covered = t2End ? inRange(d2, monthStart, t2End) : false;
 
     if (t2Covered) pa.t2MonthSet.add(r2.learnerId);
+    // Pool-level latest day in the selected month window (for added_connected in By pool)
+    if (t2Covered && isValidISODate(d2)){
+      if (!pa.latestDate || d2 > pa.latestDate){
+        pa.latestDate = d2;
+        pa.latestDaySet = new Set([r2.learnerId]);
+      } else if (d2 === pa.latestDate){
+        pa.latestDaySet.add(r2.learnerId);
+      }
+    }
 
     if (t2End && inRange(d2, periodStartNext, t2End) && t2Covered){
       if (!t1Covered) pa.monthFirstSet.add(r2.learnerId);
@@ -276,8 +292,6 @@ function buildMetricsAndRemark(t1Rows, t2Rows, monthStart, monthEndFull, t1End, 
 
     if (t2End && isValidISODate(d2) && d2===t2End){
       latestDayCountByEA.get(eaKey).add(r2.learnerId);
-      pa.latestDaySet.add(r2.learnerId);
-
       const m = latestDayPoolByEA.get(eaKey);
       const existing = m.get(r2.learnerId);
       if (!existing || poolPriority(pool) > poolPriority(existing)){
@@ -489,8 +503,8 @@ function buildRecommendations(t2Rows, monthStart, t2End, monthEndFull){
       }
       const daysMostRecent = mostRecent ? diffDays(refDate, mostRecent) : 9999;
 
-      // Exclude very-recent connects (<=7d) from any follow-up buckets
-      if (anyCovered && daysMostRecent <= 7) continue;
+      // Exclude families with any very-recent connect within 14 days (your rule: if one ID <=14d, all IDs not recommended)
+      if (mostRecent && daysMostRecent <= 14) continue;
 
       // Build best member for sorting: pick member with highest pool priority, then older lastConn, then higher LM, then lower remaining
       let best = members[0];
@@ -513,8 +527,7 @@ function buildRecommendations(t2Rows, monthStart, t2End, monthEndFull){
       if (anyCovered){
         const daysOldest = oldest ? diffDays(refDate, oldest) : 9999;
         if (daysOldest > 14){ bucket = 1; label = ">14d in month"; }
-        else if (daysOldest > 7){ bucket = 2; label = "8-14d in month"; }
-        else { continue; } // <=7 already excluded above, but keep safety
+        else { continue; } // <=14d follow-up families are not recommended
       }
 
       // Apply gating using overall EA coverage (ALL pools) based on the member's team
@@ -522,7 +535,6 @@ function buildRecommendations(t2Rows, monthStart, t2End, monthEndFull){
       const covRate = eaCovRate.get(teamKey) ?? 0;
 
       if (bucket === 1 && covRate < TH_INCLUDE_COVERED) continue;
-      if (bucket === 2 && covRate < TH_INCLUDE_RECENT) continue;
 
       famInfos.push({fk, members, best, bucket, label, covRate});
     }
