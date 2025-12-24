@@ -1,6 +1,6 @@
 
 const $ = (id) => document.getElementById(id);
-const worker = new Worker("worker.js?v=16");
+const worker = new Worker("worker.js");
 let lastResults = null;
 
 function setupTabs(){
