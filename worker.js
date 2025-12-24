@@ -107,15 +107,42 @@ function readWorkbookFast(buf){
   });
 }
 
+// Fast dense-sheet cell read (dense:true returns ws as row arrays of cell objects)
+function getDenseVal(ws, r, c){
+  const row = ws ? ws[r] : null;
+  if (!row) return null;
+  const cell = row[c];
+  if (cell == null) return null;
+  if (typeof cell === "object" && "v" in cell) return cell.v;
+  return cell;
+}
+
+function denseRowToHeader(ws, range){
+  const hr = range.s.r;
+  const header = [];
+  for (let c=range.s.c; c<=range.e.c; c++){
+    const v = getDenseVal(ws, hr, c);
+    header.push(v == null ? "" : v.toString());
+  }
+  return {header, hr};
+}
+
 function headersContain(wb, col){
   for (const sn of wb.SheetNames){
     const ws = wb.Sheets[sn];
-    const aoa = XLSX.utils.sheet_to_json(ws,{header:1, defval:"", blankrows:false, raw:true});
-    if (!aoa || aoa.length<1) continue;
-    const header = (aoa[0]||[]).map(x=>x==null?"":x.toString());
-    if (header.includes(col)) return true;
+    if (!ws || !ws["!ref"]) continue;
+    const range = XLSX.utils.decode_range(ws["!ref"]);
+    const hr = range.s.r;
+    for (let c=range.s.c; c<=range.e.c; c++){
+      const v = getDenseVal(ws, hr, c);
+      if (v == null) continue;
+      if (v.toString() === col) return true;
+    }
   }
   return false;
+}
+function fixedTemplateWorks(wb){
+  return headersContain(wb, FIXED.learnerId) && headersContain(wb, FIXED.eaName) && headersContain(wb, FIXED.lastConn);
 }
 function fixedTemplateWorks(wb){
   return headersContain(wb, FIXED.learnerId) && headersContain(wb, FIXED.eaName) && headersContain(wb, FIXED.lastConn);
@@ -126,10 +153,12 @@ function parseWorkbook(wb, teamFilter){
   for (const sn of wb.SheetNames){
     const pool=poolNameFromSheet(sn);
     const ws=wb.Sheets[sn];
-    const aoa = XLSX.utils.sheet_to_json(ws,{header:1, defval:"", blankrows:false, raw:true});
-    if (!aoa || aoa.length<2) continue;
+    if (!ws || !ws["!ref"]) continue;
+    const range = XLSX.utils.decode_range(ws["!ref"]);
+    if (range.e.r - range.s.r < 1) continue;
 
-    const header = aoa[0].map(x=>x==null?"":x.toString());
+    const {header, hr} = denseRowToHeader(ws, range);
+
     const idx = {
       learnerId: header.indexOf(FIXED.learnerId),
       familyId: header.indexOf(FIXED.familyId),
@@ -142,31 +171,35 @@ function parseWorkbook(wb, teamFilter){
     };
     if (idx.learnerId<0 || idx.eaName<0 || idx.lastConn<0) continue;
 
-    for (let i=1;i<aoa.length;i++){
-      const r=aoa[i];
-      const learnerId = r[idx.learnerId];
-      const eaName = r[idx.eaName];
-      if (!learnerId || !eaName) continue;
+    const baseC = range.s.c;
 
-      const teamName = idx.teamName>=0 ? r[idx.teamName] : "";
-      if (teamFilter && teamName && teamName.toString().trim() !== teamFilter.trim()) continue;
+    for (let r=hr+1; r<=range.e.r; r++){
+      const learnerRaw = getDenseVal(ws, r, baseC + idx.learnerId);
+      const eaRaw = getDenseVal(ws, r, baseC + idx.eaName);
+      if (learnerRaw == null || learnerRaw === "" || eaRaw == null || eaRaw === "") continue;
 
-      const lastConn = excelDateToISO(idx.lastConn>=0 ? r[idx.lastConn] : null);
-      const familyId = idx.familyId>=0 ? (r[idx.familyId] ?? "") : "";
-      const lm = idx.lastMonthConsumed>=0 ? safeNum(r[idx.lastMonthConsumed]) : null;
-      const tm = idx.thisMonthConsumed>=0 ? safeNum(r[idx.thisMonthConsumed]) : null;
-      const rem = idx.remaining>=0 ? safeNum(r[idx.remaining]) : null;
+      const teamRaw = idx.teamName>=0 ? getDenseVal(ws, r, baseC + idx.teamName) : "";
+      const teamName = (teamRaw ?? "").toString().trim();
+      if (teamFilter && teamName && teamName !== teamFilter.trim()) continue;
+
+      const lastConnRaw = idx.lastConn>=0 ? getDenseVal(ws, r, baseC + idx.lastConn) : null;
+      const lastConn = excelDateToISO(lastConnRaw);
+
+      const familyRaw = idx.familyId>=0 ? getDenseVal(ws, r, baseC + idx.familyId) : "";
+      const lmRaw = idx.lastMonthConsumed>=0 ? getDenseVal(ws, r, baseC + idx.lastMonthConsumed) : null;
+      const tmRaw = idx.thisMonthConsumed>=0 ? getDenseVal(ws, r, baseC + idx.thisMonthConsumed) : null;
+      const remRaw = idx.remaining>=0 ? getDenseVal(ws, r, baseC + idx.remaining) : null;
 
       rows.push({
         pool,
-        learnerId: learnerId.toString().trim(),
-        familyId: (familyId??"").toString().trim(),
-        eaName: eaName.toString().trim(),
-        teamName: (teamName??"").toString().trim(),
+        learnerId: learnerRaw.toString().trim(),
+        familyId: (familyRaw??"").toString().trim(),
+        eaName: eaRaw.toString().trim(),
+        teamName,
         lastConn,
-        lastMonthConsumed: lm,
-        thisMonthConsumed: tm,
-        remaining: rem
+        lastMonthConsumed: safeNum(lmRaw),
+        thisMonthConsumed: safeNum(tmRaw),
+        remaining: safeNum(remRaw)
       });
     }
   }

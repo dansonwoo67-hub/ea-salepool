@@ -1,4 +1,4 @@
-# EA Coverage Dashboard (v15)
+# EA Coverage Dashboard (v17)
 
 Fixes per your feedback:
 1) EA overview:
@@ -27,3 +27,8 @@ v15 updates:
 - Recommendations: "not connected this month" always prioritized.
 - Family rule: if a family contains ANY record connected this month, the whole family is excluded from the "uncovered" bucket; mixed families (some covered, some not) are fully excluded (no recommendations for that family).
 - Follow-up gating uses OVERALL EA month coverage (all pools excluding M1), not per-pool coverage.
+
+
+v17 speed update:
+- Parsing optimized: read dense worksheets directly (no full sheet_to_json), only required columns.
+- Worker cache-bust: worker.js?v=17.
