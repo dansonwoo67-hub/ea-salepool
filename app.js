@@ -1,6 +1,6 @@
 
 const $ = (id) => document.getElementById(id);
-const worker = new Worker("worker.js?v=17");
+const worker = new Worker("worker.js?v=18");
 let lastResults = null;
 
 function setupTabs(){
@@ -107,4 +107,10 @@ worker.onmessage = (ev)=>{
   $("exportEA").onclick=()=>downloadCSV(`${lastResults.exportBase}-EA.csv`, lastResults.eaOverview);
   $("exportPool").onclick=()=>downloadCSV(`${lastResults.exportBase}-POOL.csv`, lastResults.poolOverview);
   $("exportRecommend").onclick=()=>downloadCSV(`${lastResults.exportBase}.csv`, lastResults.recommendations);
+};
+
+
+worker.onerror = (e)=>{
+  setStatus(`Worker error: ${e.message || e.type || 'unknown'}`);
+  $("btnRun").disabled=false;
 };
